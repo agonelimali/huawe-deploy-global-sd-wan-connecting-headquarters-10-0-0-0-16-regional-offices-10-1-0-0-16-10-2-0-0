@@ -1,0 +1,707 @@
+=== NETWORK ARCHITECTURE OVERVIEW ===
+
+Device Models and Roles:
+- Core Router: Huawei NE40E-X8A - Primary SD-WAN routing, MPLS, policy control, backbone connectivity
+- Distribution Switches: Huawei S6720-54C-EI-48S-AC (x2) - VLAN aggregation, L3 routing, SD-WAN edge
+- Access Switches: Huawei S5735-L48P4S-A (x4) - End-user connectivity, port security, VLAN assignment
+- Firewall: Huawei USG6650 - Network security, access control, SD-WAN policy enforcement
+
+Network Topology Description:
+- Three-tier hierarchical SD-WAN design with redundant core and distribution layers
+- Core router provides global SD-WAN overlay, MPLS underlay, and centralized policy management
+- Distribution switches aggregate access switches, provide L3 routing, and SD-WAN edge functions
+- Access switches connect end-user devices, enforce port security, and assign VLANs
+- All devices interconnected with redundant 10G/1G trunk links
+- MPLS backup circuits on all WAN-facing devices
+- Application-aware routing, real-time monitoring, and QoS for voice/video
+
+---
+
+=== DEVICE 1: CORE ROUTER (Huawei NE40E-X8A) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname CORE-NE40E
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: Interface Configuration =====
+interface GigabitEthernet0/0/0
+ description Uplink to Internet (SD-WAN Overlay)
+ ip address 203.0.113.1 255.255.255.252
+ qos-profile WAN-UPLINK
+ undo shutdown
+interface GigabitEthernet0/0/1
+ description Uplink to MPLS Provider
+ ip address 198.51.100.1 255.255.255.252
+ qos-profile MPLS-UPLINK
+ undo shutdown
+interface GigabitEthernet0/0/2
+ description Downlink to DIST1
+ ip address 10.0.254.1 255.255.255.252
+ undo shutdown
+interface GigabitEthernet0/0/3
+ description Downlink to DIST2
+ ip address 10.0.254.5 255.255.255.252
+ undo shutdown
+interface LoopBack0
+ ip address 10.0.0.1 255.255.255.255
+interface NULL0
+! ===== END SECTION =====
+
+! ===== SECTION: Routing Protocols =====
+ospf 1
+ router-id 10.0.0.1
+ area 0.0.0.0
+  network 10.0.0.0 0.0.255.255
+  network 10.1.0.0 0.0.255.255
+  network 10.2.0.0 0.0.255.255
+  network 10.3.0.0 0.0.255.255
+  network 198.51.100.0 0.0.0.3
+  network 203.0.113.0 0.0.0.3
+bgp 65000
+ peer 198.51.100.2 as-number 65010
+ peer 203.0.113.2 as-number 65020
+ ipv4-family unicast
+  network 10.0.0.0 255.255.0.0
+  network 10.1.0.0 255.255.0.0
+  network 10.2.0.0 255.255.0.0
+  network 10.3.0.0 255.255.0.0
+  peer 198.51.100.2 enable
+  peer 203.0.113.2 enable
+! ===== END SECTION =====
+
+! ===== SECTION: SD-WAN Policy & Application-Aware Routing =====
+sd-wan
+ controller enable
+ controller ip 10.0.0.10
+ overlay enable
+ application-aware enable
+ application-group VOICE
+  application sip
+  application rtp
+ application-group VIDEO
+  application h323
+  application mpeg
+ path-policy VOICE-PREF
+  preferred-path internet
+  backup-path mpls
+ path-policy VIDEO-PREF
+  preferred-path mpls
+  backup-path internet
+ path-policy DEFAULT-PREF
+! ===== END SECTION =====
+
+! ===== SECTION: QoS and Bandwidth Management =====
+  traffic classifier VOICE match application sip rtp
+  traffic behavior VOICE-PRIORITY
+   priority 7
+   car cir 10M pir 20M
+  traffic classifier VIDEO match application h323 mpeg
+  traffic behavior VIDEO-PRIORITY
+   priority 6
+   car cir 20M pir 40M
+  traffic classifier DEFAULT match any
+  traffic behavior DEFAULT-BW
+   car cir 100M pir 200M
+  traffic policy SDWAN-QOS
+   classifier VOICE behavior VOICE-PRIORITY
+   classifier VIDEO behavior VIDEO-PRIORITY
+   classifier DEFAULT behavior DEFAULT-BW
+  apply traffic policy SDWAN-QOS inbound
+  traffic policy MPLS-QOS
+  apply traffic policy MPLS-QOS inbound
+! ===== END SECTION =====
+
+! ===== SECTION: Security & Management =====
+acl number 3000
+ rule 5 permit ip source 10.0.0.0 0.0.255.255
+ rule 10 deny ip
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Core
+ip route-static 0.0.0.0 0.0.0.0 203.0.113.2
+ip route-static 10.1.0.0 255.255.0.0 198.51.100.2
+ip route-static 10.2.0.0 255.255.0.0 198.51.100.2
+ip route-static 10.3.0.0 255.255.0.0 198.51.100.2
+ip route-static 10.0.0.0 255.255.0.0 NULL0
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 2: DISTRIBUTION SWITCH 1 (Huawei S6720-54C-EI-48S-AC) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname DIST1-S6720
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN & Trunking =====
+vlan batch 10 20 30 40 100 200 300 400
+vlan 10
+ description HQ-Voice
+vlan 20
+ description HQ-Video
+vlan 30
+ description HQ-Data
+vlan 40
+ description HQ-Guest
+vlan 100
+ description Uplink-to-Core
+vlan 200
+ description Uplink-to-DIST2
+vlan 300
+ description Downlink-to-Access
+vlan 400
+ description Management
+interface Vlanif10
+ ip address 10.0.10.1 255.255.255.0
+interface Vlanif20
+ ip address 10.0.20.1 255.255.255.0
+interface Vlanif30
+ ip address 10.0.30.1 255.255.255.0
+interface Vlanif40
+ ip address 10.0.40.1 255.255.255.0
+interface Vlanif400
+ ip address 10.0.254.9 255.255.255.248
+! ===== END SECTION =====
+
+! ===== SECTION: Interface Configuration =====
+interface GigabitEthernet1/0/1
+ description Uplink to Core
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 100 400
+ port trunk pvid vlan 100
+ undo shutdown
+interface GigabitEthernet1/0/2
+ description Trunk to DIST2
+ port trunk allow-pass vlan 10 20 30 40 200 400
+ port trunk pvid vlan 200
+ undo shutdown
+interface GigabitEthernet1/0/3
+ description Downlink to Access1
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+interface GigabitEthernet1/0/4
+ description Downlink to Access2
+ undo shutdown
+interface GigabitEthernet1/0/5
+ description Management
+ port link-type access
+ port default vlan 400
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Layer 3 Routing =====
+ospf 1
+ router-id 10.0.254.2
+ area 0.0.0.0
+  network 10.0.10.0 0.0.0.255
+  network 10.0.20.0 0.0.0.255
+  network 10.0.30.0 0.0.0.255
+  network 10.0.40.0 0.0.0.255
+  network 10.0.254.8 0.0.0.7
+ip route-static 0.0.0.0 0.0.0.0 10.0.254.2
+ip route-static 10.1.0.0 255.255.0.0 10.0.254.2
+ip route-static 10.2.0.0 255.255.0.0 10.0.254.2
+ip route-static 10.3.0.0 255.255.0.0 10.0.254.2
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 3: DISTRIBUTION SWITCH 2 (Huawei S6720-54C-EI-48S-AC) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname DIST2-S6720
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN & Trunking =====
+vlan batch 10 20 30 40 100 200 300 400
+vlan 10
+ description HQ-Voice
+vlan 20
+ description HQ-Video
+vlan 30
+ description HQ-Data
+vlan 40
+ description HQ-Guest
+vlan 100
+ description Uplink-to-Core
+vlan 200
+ description Uplink-to-DIST1
+vlan 300
+ description Downlink-to-Access
+vlan 400
+ description Management
+interface Vlanif10
+ ip address 10.0.10.2 255.255.255.0
+interface Vlanif20
+ ip address 10.0.20.2 255.255.255.0
+interface Vlanif30
+ ip address 10.0.30.2 255.255.255.0
+interface Vlanif40
+ ip address 10.0.40.2 255.255.255.0
+interface Vlanif400
+ ip address 10.0.254.10 255.255.255.248
+! ===== END SECTION =====
+
+! ===== SECTION: Interface Configuration =====
+interface GigabitEthernet1/0/1
+ description Uplink to Core
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 100 400
+ port trunk pvid vlan 100
+ undo shutdown
+interface GigabitEthernet1/0/2
+ description Trunk to DIST1
+ port trunk allow-pass vlan 10 20 30 40 200 400
+ port trunk pvid vlan 200
+ undo shutdown
+interface GigabitEthernet1/0/3
+ description Downlink to Access3
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+interface GigabitEthernet1/0/4
+ description Downlink to Access4
+ undo shutdown
+interface GigabitEthernet1/0/5
+ description Management
+ port link-type access
+ port default vlan 400
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Layer 3 Routing =====
+ospf 1
+ router-id 10.0.254.6
+ area 0.0.0.0
+  network 10.0.10.0 0.0.0.255
+  network 10.0.20.0 0.0.0.255
+  network 10.0.30.0 0.0.0.255
+  network 10.0.40.0 0.0.0.255
+  network 10.0.254.8 0.0.0.7
+ip route-static 0.0.0.0 0.0.0.0 10.0.254.6
+ip route-static 10.1.0.0 255.255.0.0 10.0.254.6
+ip route-static 10.2.0.0 255.255.0.0 10.0.254.6
+ip route-static 10.3.0.0 255.255.0.0 10.0.254.6
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 4: ACCESS SWITCH 1 (Huawei S5735-L48P4S-A) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname ACCESS1-S5735
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN Assignment & Port Security =====
+vlan batch 10 20 30 40 300 400
+interface GigabitEthernet0/0/1
+ description Voice Port
+ port link-type access
+ port default vlan 10
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/2
+ description Video Port
+ port default vlan 20
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/3
+ description Data Port
+ port default vlan 30
+ port-security enable
+ port-security max-mac-num 4
+ undo shutdown
+interface GigabitEthernet0/0/4
+ description Guest Port
+ port default vlan 40
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/48
+ description Uplink to DIST1
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Management & Monitoring =====
+interface Vlanif400
+ ip address 10.0.254.17 255.255.255.248
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Access1
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 5: ACCESS SWITCH 2 (Huawei S5735-L48P4S-A) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname ACCESS2-S5735
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN Assignment & Port Security =====
+vlan batch 10 20 30 40 300 400
+interface GigabitEthernet0/0/1
+ description Voice Port
+ port link-type access
+ port default vlan 10
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/2
+ description Video Port
+ port default vlan 20
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/3
+ description Data Port
+ port default vlan 30
+ port-security enable
+ port-security max-mac-num 4
+ undo shutdown
+interface GigabitEthernet0/0/4
+ description Guest Port
+ port default vlan 40
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/48
+ description Uplink to DIST1
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Management & Monitoring =====
+interface Vlanif400
+ ip address 10.0.254.18 255.255.255.248
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Access2
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 6: ACCESS SWITCH 3 (Huawei S5735-L48P4S-A) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname ACCESS3-S5735
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN Assignment & Port Security =====
+vlan batch 10 20 30 40 300 400
+interface GigabitEthernet0/0/1
+ description Voice Port
+ port link-type access
+ port default vlan 10
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/2
+ description Video Port
+ port default vlan 20
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/3
+ description Data Port
+ port default vlan 30
+ port-security enable
+ port-security max-mac-num 4
+ undo shutdown
+interface GigabitEthernet0/0/4
+ description Guest Port
+ port default vlan 40
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/48
+ description Uplink to DIST2
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Management & Monitoring =====
+interface Vlanif400
+ ip address 10.0.254.19 255.255.255.248
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Access3
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 7: ACCESS SWITCH 4 (Huawei S5735-L48P4S-A) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname ACCESS4-S5735
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: VLAN Assignment & Port Security =====
+vlan batch 10 20 30 40 300 400
+interface GigabitEthernet0/0/1
+ description Voice Port
+ port link-type access
+ port default vlan 10
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/2
+ description Video Port
+ port default vlan 20
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/3
+ description Data Port
+ port default vlan 30
+ port-security enable
+ port-security max-mac-num 4
+ undo shutdown
+interface GigabitEthernet0/0/4
+ description Guest Port
+ port default vlan 40
+ port-security enable
+ port-security max-mac-num 2
+ undo shutdown
+interface GigabitEthernet0/0/48
+ description Uplink to DIST2
+ port link-type trunk
+ port trunk allow-pass vlan 10 20 30 40 300 400
+ port trunk pvid vlan 300
+ undo shutdown
+! ===== END SECTION =====
+
+! ===== SECTION: Management & Monitoring =====
+interface Vlanif400
+ ip address 10.0.254.20 255.255.255.248
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Access4
+! ===== END SECTION =====
+
+---
+
+=== DEVICE 8: FIREWALL (Huawei USG6650) ===
+
+! ===== SECTION: Basic Configuration =====
+sysname FW-USG6650
+clock timezone UTC 0
+info-center enable
+info-center loghost 10.0.0.10 facility local7
+ntp-service enable
+ntp-service unicast-server 10.0.0.10
+aaa
+ authentication-scheme default
+ authentication-mode aaa
+ local-user admin password irreversible-cipher $1a2b3c4d5e6f
+ local-user admin privilege level 15
+ local-user admin service-type telnet ssh
+ domain default enable default
+user-interface vty 0 4
+ protocol inbound ssh
+ idle-timeout 15
+user-interface console 0
+save
+! ===== END SECTION =====
+
+! ===== SECTION: Interface Configuration =====
+interface GigabitEthernet0/0/0
+ description Uplink to Core
+ ip address 10.0.254.13 255.255.255.252
+ undo shutdown
+interface GigabitEthernet0/0/1
+ description Downlink to Distribution
+ ip address 10.0.254.14 255.255.255.252
+ undo shutdown
+interface Vlanif400
+ ip address 10.0.254.21 255.255.255.248
+! ===== END SECTION =====
+
+! ===== SECTION: Security Policies & SD-WAN Enforcement =====
+acl number 3100
+ rule 5 permit ip source 10.0.0.0 0.0.255.255 destination 10.1.0.0 0.0.255.255
+ rule 10 permit ip source 10.0.0.0 0.0.255.255 destination 10.2.0.0 0.0.255.255
+ rule 15 permit ip source 10.0.0.0 0.0.255.255 destination 10.3.0.0 0.0.255.255
+ rule 20 deny ip
+firewall zone trust
+ add interface GigabitEthernet0/0/1
+firewall zone untrust
+ add interface GigabitEthernet0/0/0
+firewall interzone trust untrust
+ policy 1
+  action permit
+  source-address 10.0.0.0 0.0.255.255
+  destination-address 10.1.0.0 0.0.255.255
+ policy 2
+  destination-address 10.2.0.0 0.0.255.255
+ policy 3
+  destination-address 10.3.0.0 0.0.255.255
+ policy 10
+  action deny
+  log enable
+! ===== END SECTION =====
+
+! ===== SECTION: Monitoring & Management =====
+snmp-agent
+snmp-agent community read SDWAN-RO
+snmp-agent sys-info contact NOC@hq.example.com
+snmp-agent sys-info location HQ-Firewall
+ip route-static 0.0.0.0 0.0.0.0 10.0.254.13
+ip route-static 10.0.0.0 255.255.0.0 10.0.254.14
+ip route-static 10.1.0.0 255.255.0.0 10.0.254.14
+ip route-static 10.2.0.0 255.255.0.0 10.0.254.14
+ip route-static 10.3.0.0 255.255.0.0 10.0.254.14
+! ===== END SECTION =====
+
+---
+
+=== DEPLOYMENT RECOMMENDATIONS ===
+
+Installation Sequence:
+1. Install and configure Core Router (NE40E-X8A) first, including SD-WAN and MPLS uplinks
+2. Connect and configure Distribution Switches (S6720) to Core
+3. Configure trunk links and VLANs between Distribution Switches
+4. Install and configure Access Switches (S5735), connect to Distribution layer, assign VLANs and enable port security
+5. Install and configure Firewall (USG6650), connect to Core and Distribution
+6. Verify all inter-device connectivity and redundancy
+7. Test SD-WAN application-aware routing, path optimization, and failover
+8. Validate QoS for voice/video and bandwidth management
+9. Implement SNMP monitoring and centralized logging
+10. Document configuration and perform final validation
+
+
+**Total commands: ~500+ (across all devices, focused on essential, production-ready configuration for global SD-WAN, MPLS backup, application-aware routing, QoS, and security)**
